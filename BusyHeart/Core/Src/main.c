@@ -18,12 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usart.h"
 #include "gpio.h"
 #include "fsmc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "string.h"
 #include "led/led.h"
 #include "atk_md0350/atk_md0350.h"
 
@@ -90,11 +92,15 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_FSMC_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
     HAL_Delay(100);
 
     atk_md0350_init();
     atk_md0350_clear(ATK_MD0350_BLUE);
+
+    char msg[] = "Hello\r\n";
+    HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
 
   /* USER CODE END 2 */
 
