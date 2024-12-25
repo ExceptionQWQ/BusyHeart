@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
 #include "fsmc.h"
@@ -26,8 +27,10 @@
 /* USER CODE BEGIN Includes */
 
 #include "string.h"
+#include "stdio.h"
 #include "led/led.h"
 #include "atk_md0350/atk_md0350.h"
+#include "ads1292/ads1292.h"
 
 /* USER CODE END Includes */
 
@@ -61,6 +64,25 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+
+
+
+volatile int ads_available = 0;
+
+void HAL_GPIO_EXTI_Callback(uint16_t pin)
+{
+    if (pin == GPIO_PIN_4) {
+        ads_available = 1;
+        static int a = 0;
+        a++;
+        if (a % 2 == 0)
+            led_ds1_toggle();
+    }
+}
+
+
+
+
 /* USER CODE END 0 */
 
 /**
@@ -93,14 +115,16 @@ int main(void)
   MX_GPIO_Init();
   MX_FSMC_Init();
   MX_USART1_UART_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+
+
     HAL_Delay(100);
 
     atk_md0350_init();
     atk_md0350_clear(ATK_MD0350_BLUE);
 
-    char msg[] = "Hello\r\n";
-    HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
+    ads1292_init();
 
   /* USER CODE END 2 */
 
@@ -108,9 +132,16 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      led_ds0_toggle();
-      led_ds1_toggle();
-      HAL_Delay(500);
+      if (ads_available) {
+          ads_available = 0;
+          led_ds0_toggle();
+
+          uint32_t value = ads1292_read_channel2();
+
+          char msg[64];
+          snprintf(msg, sizeof(msg), "id:%d\r\n", value);
+          HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
+      }
 
     /* USER CODE END WHILE */
 
@@ -156,7 +187,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {

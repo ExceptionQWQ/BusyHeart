@@ -61,6 +61,15 @@ void Error_Handler(void);
 #define LED_DS0_GPIO_Port GPIOF
 #define LED_DS1_Pin GPIO_PIN_10
 #define LED_DS1_GPIO_Port GPIOF
+#define ADS_START_Pin GPIO_PIN_0
+#define ADS_START_GPIO_Port GPIOA
+#define ADS_PWDN_Pin GPIO_PIN_1
+#define ADS_PWDN_GPIO_Port GPIOA
+#define ADS_DRDY_Pin GPIO_PIN_4
+#define ADS_DRDY_GPIO_Port GPIOA
+#define ADS_DRDY_EXTI_IRQn EXTI4_IRQn
+#define ADS_CS_Pin GPIO_PIN_4
+#define ADS_CS_GPIO_Port GPIOC
 #define LCD_BL_Pin GPIO_PIN_15
 #define LCD_BL_GPIO_Port GPIOB
 
