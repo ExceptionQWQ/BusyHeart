@@ -26,11 +26,13 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "math.h"
 #include "string.h"
 #include "stdio.h"
 #include "led/led.h"
 #include "atk_md0350/atk_md0350.h"
 #include "ads1292/ads1292.h"
+#include "iir_filter/iir_filter.h"
 
 /* USER CODE END Includes */
 
@@ -118,7 +120,6 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
-
     HAL_Delay(100);
 
     atk_md0350_init();
@@ -130,16 +131,36 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+
+  struct IIR_Handle notch_50hz;
+  struct IIR_Handle notch_100hz;
+  struct IIR_Handle low_pass;
+  struct IIR_Handle high_pass;
+
+  iir_filter_init(&notch_50hz, 1.0, -1.52226142, 0.88161859, 0.9408093, -1.52226142, 0.9408093);
+  iir_filter_init(&notch_100hz, 1.0, -0.54871515, 0.77567951, 0.88783976, -0.54871515, 0.88783976);
+  iir_filter_init(&low_pass, 1.0, -1.64745998, 0.70089678, 0.0133592, 0.0267184, 0.0133592);
+  iir_filter_init(&high_pass, 1.0, -1.91119707, 0.91497583, 0.95654323, -1.91308645, 0.95654323);
+
+
   while (1)
   {
       if (ads_available) {
           ads_available = 0;
           led_ds0_toggle();
 
-          uint32_t value = ads1292_read_channel2();
+          double value = ads1292_read_channel2();
+
+          value = iir_filter_process(&notch_50hz, value);
+          value = iir_filter_process(&notch_100hz, value);
+          value = iir_filter_process(&low_pass, value);
+          value = iir_filter_process(&high_pass, value);
+
+          if (fabs(value) < 200) value *= 0.3;
 
           char msg[64];
-          snprintf(msg, sizeof(msg), "id:%d\r\n", value);
+          snprintf(msg, sizeof(msg), "id:%.2lf\r\n", value);
           HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
       }
 
