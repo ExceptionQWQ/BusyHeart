@@ -19,11 +19,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "gpio.h"
+#include "fsmc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
 #include "led/led.h"
+#include "atk_md0350/atk_md0350.h"
 
 /* USER CODE END Includes */
 
@@ -87,7 +89,12 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
+    HAL_Delay(100);
+
+    atk_md0350_init();
+    atk_md0350_clear(ATK_MD0350_BLUE);
 
   /* USER CODE END 2 */
 
