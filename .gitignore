@@ -1,0 +1,7 @@
+.DS_Store
+build
+install
+.vscode
+cmake-build-debug
+cmake-build-release
+.idea
