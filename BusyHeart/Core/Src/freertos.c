@@ -24,6 +24,7 @@
 #include "math.h"
 #include "string.h"
 #include "stdio.h"
+#include "arm_math.h"
 #include "led/led.h"
 #include "atk_md0350/atk_md0350.h"
 #include "ads1292/ads1292.h"
@@ -64,6 +65,13 @@ const osThreadAttr_t drawTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for fftTask */
+osThreadId_t fftTaskHandle;
+const osThreadAttr_t fftTask_attributes = {
+  .name = "fftTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for adsAvaiable */
 osSemaphoreId_t adsAvaiableHandle;
 const osSemaphoreAttr_t adsAvaiable_attributes = {
@@ -74,11 +82,26 @@ osSemaphoreId_t drawValueAvailableHandle;
 const osSemaphoreAttr_t drawValueAvailable_attributes = {
   .name = "drawValueAvailable"
 };
+/* Definitions for fftAvailable */
+osSemaphoreId_t fftAvailableHandle;
+const osSemaphoreAttr_t fftAvailable_attributes = {
+  .name = "fftAvailable"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 volatile double draw_value = 0;
+volatile int16_t* current_fft = 0;
+
+static int16_t wave_buff0[4096];
+static int16_t wave_buff1[4096];
+static int16_t last_fft[4096];
+static int16_t wave_fft[4096];
+static int current_index = 0;
+static int current_wave_append = 0;
+
+static arm_rfft_instance_q15 fft_instance;
 
 void HAL_GPIO_EXTI_Callback(uint16_t pin)
 {
@@ -121,7 +144,7 @@ void lcd_draw_heartbeat(double value)
         atk_md0350_show_string(435, 138, 50, 12, msg_min_value, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
     }
 
-    /* 寻找幅值 */
+    /* 寻找幅值范围 */
     if (value > c_max_value) c_max_value = value;
     if (value < c_min_value) c_min_value = value;
 
@@ -142,11 +165,49 @@ void lcd_draw_heartbeat(double value)
     last_draw_y = draw_y;
 }
 
+static void draw_fft(int16_t* wave, int start, int end)
+{
+    static const int x1 = 5, y1 = 180, x2 = 432, y2 = 310; /* 绘制范围 */
+    atk_md0350_fill(x1, y1, x2, y2, ATK_MD0350_WHITE);
+    int16_t min_value = 0x7fff, max_value = 0;
+    /* 寻找幅值范围 */
+    for (int index = start; index < end; ++index) {
+        if (wave[index] > max_value) max_value = wave[index];
+        if (wave[index] < min_value) min_value = wave[index];
+    }
+
+    int last_draw_x = -1, last_draw_y = 0;
+    for (int index = start; index < end; ++index) {
+
+        int draw_x = x1 + (index - start) * (x2 - x1) / (end - start);
+        int draw_y = y2 - (wave[index] - min_value) * (y2 - y1) / (max_value - min_value) * 0.95;
+
+        if (draw_x > x2) draw_x = x2;
+        if (draw_x < x1) draw_x = x1;
+        if (draw_y > y2) draw_y = y2;
+        if (draw_y < y1) draw_y = y1;
+
+        if (last_draw_x == -1) {
+            last_draw_x = draw_x;
+            last_draw_y = draw_y;
+            continue ;
+        }
+        atk_md0350_draw_line(last_draw_x, last_draw_y, draw_x, draw_y, ATK_MD0350_RED);
+        last_draw_x = draw_x;
+        last_draw_y = draw_y;
+    }
+
+    char msg_fft[64];
+    snprintf(msg_fft, sizeof(msg_fft), "FFT");
+    atk_md0350_fill(435, 298, 432 + 50, 298 + 12, ATK_MD0350_WHITE);
+    atk_md0350_show_string(435, 298, 80, 40, msg_fft, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
+}
 
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
 void DrawTask(void *argument);
+void FFTTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -171,6 +232,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of drawValueAvailable */
   drawValueAvailableHandle = osSemaphoreNew(1, 1, &drawValueAvailable_attributes);
 
+  /* creation of fftAvailable */
+  fftAvailableHandle = osSemaphoreNew(1, 1, &fftAvailable_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -189,6 +253,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of drawTask */
   drawTaskHandle = osThreadNew(DrawTask, NULL, &drawTask_attributes);
+
+  /* creation of fftTask */
+  fftTaskHandle = osThreadNew(FFTTask, NULL, &fftTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -224,7 +291,6 @@ void StartDefaultTask(void *argument)
     iir_filter_init(&low_pass, 1.0, -1.64745998, 0.70089678, 0.0133592, 0.0267184, 0.0133592);
     iir_filter_init(&high_pass, 1.0, -1.91119707, 0.91497583, 0.95654323, -1.91308645, 0.95654323);
 
-
     while (1) {
         if (osSemaphoreAcquire(adsAvaiableHandle, pdMS_TO_TICKS(portMAX_DELAY)) == osOK) {
             led_ds0_toggle();
@@ -238,7 +304,7 @@ void StartDefaultTask(void *argument)
 
             if (fabs(value) < 200) value *= 0.3;
 
-            value = -value * 7;
+            value = value * 7;
 
             char msg[64];
             snprintf(msg, sizeof(msg), "id:%.8lf\r\n", value);
@@ -247,6 +313,26 @@ void StartDefaultTask(void *argument)
 
             draw_value = value;
             osSemaphoreRelease(drawValueAvailableHandle);
+
+            if (current_wave_append) {
+                wave_buff1[current_index++] = value * 10000;
+                if (current_index >= 4096) {
+                    current_index = 0;
+                    current_wave_append = 0;
+                    current_fft = wave_buff1;
+
+                    osSemaphoreRelease(fftAvailableHandle);
+                }
+            } else {
+                wave_buff0[current_index++] = value * 10000;
+                if (current_index >= 4096) {
+                    current_index = 0;
+                    current_wave_append = 1;
+                    current_fft = wave_buff0;
+
+                    osSemaphoreRelease(fftAvailableHandle);
+                }
+            }
         }
     }
 
@@ -267,10 +353,41 @@ void DrawTask(void *argument)
   for(;;)
   {
       if (osSemaphoreAcquire(drawValueAvailableHandle, pdMS_TO_TICKS(portMAX_DELAY)) == osOK) {
+          portENTER_CRITICAL();
           lcd_draw_heartbeat(draw_value);
+          portEXIT_CRITICAL();
       }
   }
   /* USER CODE END DrawTask */
+}
+
+/* USER CODE BEGIN Header_FFTTask */
+/**
+* @brief Function implementing the fftTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_FFTTask */
+void FFTTask(void *argument)
+{
+  /* USER CODE BEGIN FFTTask */
+  /* Infinite loop */
+  for(;;)
+  {
+      if (osSemaphoreAcquire(fftAvailableHandle, pdMS_TO_TICKS(portMAX_DELAY)) == osOK) {
+          uint16_t fftSize = 4096;      //定义rfft的长度
+          uint8_t ifftFlag = 0;         //表示fft变换为正变换,1则为逆变换
+          arm_rfft_init_q15(&fft_instance, fftSize, ifftFlag, 1);
+          arm_rfft_q15(&fft_instance, current_fft, wave_fft);
+          for (int i = 0; i < 4096; ++i) wave_fft[i] = fabs(wave_fft[i]);
+
+          portENTER_CRITICAL();
+          draw_fft(wave_fft, 0, 1024);
+          portEXIT_CRITICAL();
+      }
+    osDelay(1);
+  }
+  /* USER CODE END FFTTask */
 }
 
 /* Private application code --------------------------------------------------*/
