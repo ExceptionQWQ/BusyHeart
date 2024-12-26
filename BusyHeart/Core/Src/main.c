@@ -112,7 +112,12 @@ int main(void)
     HAL_Delay(100);
 
     atk_md0350_init();
-    atk_md0350_clear(ATK_MD0350_BLUE);
+    atk_md0350_clear(ATK_MD0350_WHITE);
+
+    char msg_author[64];
+    snprintf(msg_author, sizeof(msg_author), "author:BusyBox (busybox177634@gmail.com)");
+    atk_md0350_fill(180, 160, 180 + 250, 160 + 16, ATK_MD0350_WHITE);
+    atk_md0350_show_string(180, 160, 250, 16, msg_author, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
 
     ads1292_init();
 

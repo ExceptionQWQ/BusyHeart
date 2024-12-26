@@ -72,6 +72,20 @@ const osThreadAttr_t fftTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for beepTask */
+osThreadId_t beepTaskHandle;
+const osThreadAttr_t beepTask_attributes = {
+  .name = "beepTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for keyScanTask */
+osThreadId_t keyScanTaskHandle;
+const osThreadAttr_t keyScanTask_attributes = {
+  .name = "keyScanTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for adsAvaiable */
 osSemaphoreId_t adsAvaiableHandle;
 const osSemaphoreAttr_t adsAvaiable_attributes = {
@@ -93,6 +107,9 @@ const osSemaphoreAttr_t fftAvailable_attributes = {
 
 volatile double draw_value = 0;
 volatile int16_t* current_fft = 0;
+volatile int enable_beep = 0;
+volatile int using_test_signal = 0;
+volatile int show_fft = 1;
 
 static int16_t wave_buff0[4096];
 static int16_t wave_buff1[4096];
@@ -110,7 +127,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t pin)
 
         static int a = 0;
         a++;
-        if (a % 40 == 0)
+        if (a % 10 == 0)
             led_ds1_toggle();
     }
 }
@@ -121,6 +138,11 @@ void lcd_draw_heartbeat(double value)
     value = - value; /* 由于LCD绘制方向，需要翻转一下图像 */
 
     static const int x1 = 5, y1 = 10, x2 = 432, y2 = 150; /* 绘制范围 */
+    atk_md0350_draw_line(x1, y1, x2, y1, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x2, y1, x2, y2, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x1, y1, x1, y2, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x1, y2, x2, y2, ATK_MD0350_BLACK);
+
     static int x = x1;
     static const double scale = 0.4;
     static int last_draw_x = x1, last_draw_y = (y1 + y2) / 2;
@@ -163,12 +185,51 @@ void lcd_draw_heartbeat(double value)
 
     last_draw_x = draw_x;
     last_draw_y = draw_y;
+
+
+    /* 计算心率 */
+    static const int window_size = 20;
+    static int window_index = 0;
+    static double window[32] = {0.0};
+    static int delay_cnt = 0;
+    static int time_index = 0;
+    static int last_time_index = 0;
+    time_index++;
+
+    window[window_index++] = value;
+    if (window_index >= window_size) window_index = 0;
+
+    double window_min_value = 1.0, window_max_value = -0.1;
+    for (int i = 0; i < window_size; ++i) {
+        if (window[i] < window_min_value) window_min_value = window[i];
+        if (window[i] > window_max_value) window_max_value = window[i];
+    }
+
+    if (window_max_value - window_min_value > (max_value - min_value) * 0.5 && delay_cnt == 0) { /* 0.5为心跳阈值 */
+        delay_cnt = 100;
+
+        int heart_rate = 1000.0 / ((time_index - last_time_index) * 2) * 60;
+
+        last_time_index = time_index;
+        enable_beep = 1;
+        char msg_heart_rate[64];
+        snprintf(msg_heart_rate, sizeof(msg_heart_rate), "heart_rate:%d", heart_rate);
+        atk_md0350_fill(5, 160, 5 + 150, 160 + 16, ATK_MD0350_WHITE);
+        atk_md0350_show_string(5, 160, 150, 16, msg_heart_rate, ATK_MD0350_LCD_FONT_16, ATK_MD0350_BLACK);
+    }
+    delay_cnt -= 1;
+    if (delay_cnt < 0) delay_cnt = 0;
 }
 
 static void draw_fft(int16_t* wave, int start, int end)
 {
     static const int x1 = 5, y1 = 180, x2 = 432, y2 = 310; /* 绘制范围 */
     atk_md0350_fill(x1, y1, x2, y2, ATK_MD0350_WHITE);
+    atk_md0350_draw_line(x1, y1, x2, y1, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x2, y1, x2, y2, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x1, y1, x1, y2, ATK_MD0350_BLACK);
+    atk_md0350_draw_line(x1, y2, x2, y2, ATK_MD0350_BLACK);
+    
     int16_t min_value = 0x7fff, max_value = 0;
     /* 寻找幅值范围 */
     for (int index = start; index < end; ++index) {
@@ -198,7 +259,7 @@ static void draw_fft(int16_t* wave, int start, int end)
     }
 
     char msg_fft[64];
-    snprintf(msg_fft, sizeof(msg_fft), "FFT");
+    snprintf(msg_fft, sizeof(msg_fft), "FFT %d", show_fft);
     atk_md0350_fill(435, 298, 432 + 50, 298 + 12, ATK_MD0350_WHITE);
     atk_md0350_show_string(435, 298, 80, 40, msg_fft, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
 }
@@ -208,6 +269,8 @@ static void draw_fft(int16_t* wave, int start, int end)
 void StartDefaultTask(void *argument);
 void DrawTask(void *argument);
 void FFTTask(void *argument);
+void BeepTask(void *argument);
+void KeyScanTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -257,6 +320,12 @@ void MX_FREERTOS_Init(void) {
   /* creation of fftTask */
   fftTaskHandle = osThreadNew(FFTTask, NULL, &fftTask_attributes);
 
+  /* creation of beepTask */
+  beepTaskHandle = osThreadNew(BeepTask, NULL, &beepTask_attributes);
+
+  /* creation of keyScanTask */
+  keyScanTaskHandle = osThreadNew(KeyScanTask, NULL, &keyScanTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -279,8 +348,6 @@ void StartDefaultTask(void *argument)
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
 
-//    ads1292_use_test_signal();
-
     struct IIR_Handle notch_50hz;
     struct IIR_Handle notch_100hz;
     struct IIR_Handle low_pass;
@@ -293,18 +360,18 @@ void StartDefaultTask(void *argument)
 
     while (1) {
         if (osSemaphoreAcquire(adsAvaiableHandle, pdMS_TO_TICKS(portMAX_DELAY)) == osOK) {
-            led_ds0_toggle();
-
             double value = ads1292_read_channel2();
 
-            value = iir_filter_process(&notch_50hz, value);
-            value = iir_filter_process(&notch_100hz, value);
-            value = iir_filter_process(&low_pass, value);
-            value = iir_filter_process(&high_pass, value);
+            if (!using_test_signal) {
+                value = iir_filter_process(&notch_50hz, value);
+                value = iir_filter_process(&notch_100hz, value);
+                value = iir_filter_process(&low_pass, value);
+                value = iir_filter_process(&high_pass, value);
 
-            if (fabs(value) < 200) value *= 0.3;
+                if (fabs(value) < 200) value *= 0.3;
 
-            value = value * 7;
+                value = value * 7;
+            }
 
             char msg[64];
             snprintf(msg, sizeof(msg), "id:%.8lf\r\n", value);
@@ -375,19 +442,130 @@ void FFTTask(void *argument)
   for(;;)
   {
       if (osSemaphoreAcquire(fftAvailableHandle, pdMS_TO_TICKS(portMAX_DELAY)) == osOK) {
-          uint16_t fftSize = 4096;      //定义rfft的长度
-          uint8_t ifftFlag = 0;         //表示fft变换为正变换,1则为逆变换
-          arm_rfft_init_q15(&fft_instance, fftSize, ifftFlag, 1);
-          arm_rfft_q15(&fft_instance, current_fft, wave_fft);
-          for (int i = 0; i < 4096; ++i) wave_fft[i] = fabs(wave_fft[i]);
+          if (show_fft) {
+              uint16_t fftSize = 4096;      //定义rfft的长度
+              uint8_t ifftFlag = 0;         //表示fft变换为正变换,1则为逆变换
+              arm_rfft_init_q15(&fft_instance, fftSize, ifftFlag, 1);
+              arm_rfft_q15(&fft_instance, current_fft, wave_fft);
+              for (int i = 0; i < 4096; ++i) wave_fft[i] = fabs(wave_fft[i]);
 
-          portENTER_CRITICAL();
-          draw_fft(wave_fft, 0, 1024);
-          portEXIT_CRITICAL();
+              portENTER_CRITICAL();
+              draw_fft(wave_fft, 0, 1024);
+              portEXIT_CRITICAL();
+          }
       }
     osDelay(1);
   }
   /* USER CODE END FFTTask */
+}
+
+/* USER CODE BEGIN Header_BeepTask */
+/**
+* @brief Function implementing the beepTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_BeepTask */
+void BeepTask(void *argument)
+{
+  /* USER CODE BEGIN BeepTask */
+  /* Infinite loop */
+  for(;;)
+  {
+      if (enable_beep) {
+          enable_beep = 0;
+          led_ds0_on();
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET);
+          osDelay(100);
+          led_ds0_off();
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET);
+      }
+    osDelay(1);
+  }
+  /* USER CODE END BeepTask */
+}
+
+/* USER CODE BEGIN Header_KeyScanTask */
+/**
+* @brief Function implementing the keyScanTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_KeyScanTask */
+void KeyScanTask(void *argument)
+{
+  /* USER CODE BEGIN KeyScanTask */
+
+  int key0 = 0, key0_press = 0;
+  int key1 = 1, key1_press = 0;
+  int key2 = 0, key2_press = 0;
+
+  /* Infinite loop */
+  for(;;)
+  {
+      if (HAL_GPIO_ReadPin(KEY0_GPIO_Port, KEY0_Pin) == GPIO_PIN_RESET) {
+          osDelay(50);
+          if (HAL_GPIO_ReadPin(KEY0_GPIO_Port, KEY0_Pin) == GPIO_PIN_RESET) {
+              if (!key0_press) {
+                  key0 = !key0;
+
+                  if (key0) {
+                      ads1292_use_test_signal();
+                      using_test_signal = 1;
+                  } else {
+                      ads1292_use_external_signal();
+                      using_test_signal = 0;
+                  }
+              }
+              key0_press = 1;
+          }
+      } else {
+          key0_press = 0;
+      }
+
+      if (HAL_GPIO_ReadPin(KEY1_GPIO_Port, KEY1_Pin) == GPIO_PIN_RESET) {
+          osDelay(50);
+          if (HAL_GPIO_ReadPin(KEY1_GPIO_Port, KEY1_Pin) == GPIO_PIN_RESET) {
+              if (!key1_press) {
+                  key1 = !key1;
+
+                  if (key1) {
+                      show_fft = 1;
+                      portENTER_CRITICAL();
+                      draw_fft(0, 0, 0);
+                      portEXIT_CRITICAL();
+                  } else {
+                      show_fft = 0;
+                      portENTER_CRITICAL();
+                      draw_fft(0, 0, 0);
+                      portEXIT_CRITICAL();
+                  }
+              }
+
+              key1_press = 1;
+          }
+      } else {
+          key1_press = 0;
+      }
+
+      if (HAL_GPIO_ReadPin(KEY2_GPIO_Port, KEY2_Pin) == GPIO_PIN_RESET) {
+          osDelay(50);
+          if (HAL_GPIO_ReadPin(KEY2_GPIO_Port, KEY2_Pin) == GPIO_PIN_RESET) {
+              if (!key2_press) {
+                  key2 = !key2;
+
+              }
+
+              key2_press = 1;
+          }
+      } else {
+          key2_press = 0;
+      }
+
+
+    osDelay(1);
+  }
+  /* USER CODE END KeyScanTask */
 }
 
 /* Private application code --------------------------------------------------*/
