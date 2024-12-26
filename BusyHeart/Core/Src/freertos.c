@@ -219,6 +219,10 @@ void lcd_draw_heartbeat(double value)
     }
     delay_cnt -= 1;
     if (delay_cnt < 0) delay_cnt = 0;
+
+    if (max_value - min_value < 0.05) { /* 没有心跳了 */
+        enable_beep = 1;
+    }
 }
 
 static void draw_fft(int16_t* wave, int start, int end)
@@ -229,7 +233,7 @@ static void draw_fft(int16_t* wave, int start, int end)
     atk_md0350_draw_line(x2, y1, x2, y2, ATK_MD0350_BLACK);
     atk_md0350_draw_line(x1, y1, x1, y2, ATK_MD0350_BLACK);
     atk_md0350_draw_line(x1, y2, x2, y2, ATK_MD0350_BLACK);
-    
+
     int16_t min_value = 0x7fff, max_value = 0;
     /* 寻找幅值范围 */
     for (int index = start; index < end; ++index) {
