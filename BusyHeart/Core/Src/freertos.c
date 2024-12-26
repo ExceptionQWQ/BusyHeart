@@ -161,7 +161,7 @@ void lcd_draw_heartbeat(double value)
         snprintf(msg_max_value, sizeof(msg_max_value), " %.2lfmV", max_value);
         snprintf(msg_min_value, sizeof(msg_min_value), "%.2lfmV", min_value);
         atk_md0350_fill(435, 10, 432 + 50, 10 + 12, ATK_MD0350_WHITE);
-        atk_md0350_show_string(435, 10, 80, 40, msg_max_value, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
+        atk_md0350_show_string(435, 10, 50, 12, msg_max_value, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
         atk_md0350_fill(435, 138, 432 + 50, 138 + 12, ATK_MD0350_WHITE);
         atk_md0350_show_string(435, 138, 50, 12, msg_min_value, ATK_MD0350_LCD_FONT_12, ATK_MD0350_BLACK);
     }
