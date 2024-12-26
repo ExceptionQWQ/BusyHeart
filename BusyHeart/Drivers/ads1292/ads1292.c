@@ -65,7 +65,6 @@ int ads1292_init()
 
     ads1292_write_register(REG_CONFIG2, 0xa0); //使用内部参考电压
     ads1292_write_register(REG_CONFIG1, 0x02); //设置转换速率为500SPS
-
     ads1292_write_register(REG_CH1SET, 0x00); // PGA gain 6
     ads1292_write_register(REG_CH2SET, 0x00); // PGA gain 6
     ads1292_write_register(REG_RLD_SENS, 0x2c);
@@ -74,6 +73,20 @@ int ads1292_init()
 
     ads1292_send_cmd(CMD_RDATAC);
     HAL_GPIO_WritePin(ADS_START_GPIO_Port, ADS_START_Pin, GPIO_PIN_SET);
+    return 0;
+}
+
+int ads1292_use_test_signal()
+{
+    ads1292_write_register(REG_CONFIG2, 0xa3);
+    ads1292_write_register(REG_CH2SET, 0b0101);
+    return 0;
+}
+
+int ads1292_use_external_signal()
+{
+    ads1292_write_register(REG_CONFIG2, 0xa0);
+    ads1292_write_register(REG_CH2SET, 0x00);
     return 0;
 }
 
@@ -112,7 +125,7 @@ int ads1292_send_cmd(uint8_t cmd)
     return 0;
 }
 
-uint32_t ads1292_read_channel1()
+double ads1292_read_channel1()
 {
     HAL_GPIO_WritePin(ADS_CS_GPIO_Port, ADS_CS_Pin, GPIO_PIN_RESET);
     uint8_t buff[10] = {0};
@@ -121,10 +134,19 @@ uint32_t ads1292_read_channel1()
     HAL_GPIO_WritePin(ADS_CS_GPIO_Port, ADS_CS_Pin, GPIO_PIN_SET);
 
     uint32_t value = (((uint32_t)buff[4] & 0xff) << 16) | (((uint32_t)buff[5] & 0xff) << 8) | (((uint32_t)buff[6] & 0xff) << 0);
-    return value;
+
+    // 提取24位有符号数的符号位
+    uint32_t sign = (value >> 23) & 1;
+    if (sign) {
+        // 如果符号位为1，说明是负数，进行符号扩展
+        return (int32_t)(value | 0xFF000000);
+    }
+
+    /* 转换为mV */
+    return (int32_t)value * 2.42 / 6.0 * 1000.0 / ((1 << 23) - 1) + 0.07; /* 0.07mV电压偏移 */
 }
 
-uint32_t ads1292_read_channel2()
+double ads1292_read_channel2()
 {
     HAL_GPIO_WritePin(ADS_CS_GPIO_Port, ADS_CS_Pin, GPIO_PIN_RESET);
     uint8_t buff[10] = {0};
@@ -133,5 +155,14 @@ uint32_t ads1292_read_channel2()
     HAL_GPIO_WritePin(ADS_CS_GPIO_Port, ADS_CS_Pin, GPIO_PIN_SET);
 
     uint32_t value = (((uint32_t)buff[7] & 0xff) << 16) | (((uint32_t)buff[8] & 0xff) << 8) | (((uint32_t)buff[9] & 0xff) << 0);
-    return value;
+
+    // 提取24位有符号数的符号位
+    uint32_t sign = (value >> 23) & 1;
+    if (sign) {
+        // 如果符号位为1，说明是负数，进行符号扩展
+        value = value | 0xFF000000;
+    }
+
+    /* 转换为mV */
+    return (int32_t)value * 2.42 / 6.0 * 1000.0 / ((1 << 23) - 1) + 0.07; /* 0.07mV电压偏移 */
 }

@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
@@ -59,6 +60,7 @@
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -68,19 +70,6 @@ void SystemClock_Config(void);
 
 
 
-
-volatile int ads_available = 0;
-
-void HAL_GPIO_EXTI_Callback(uint16_t pin)
-{
-    if (pin == GPIO_PIN_4) {
-        ads_available = 1;
-        static int a = 0;
-        a++;
-        if (a % 2 == 0)
-            led_ds1_toggle();
-    }
-}
 
 
 
@@ -129,41 +118,19 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();  /* Call init function for freertos objects (in freertos.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-
-  struct IIR_Handle notch_50hz;
-  struct IIR_Handle notch_100hz;
-  struct IIR_Handle low_pass;
-  struct IIR_Handle high_pass;
-
-  iir_filter_init(&notch_50hz, 1.0, -1.52226142, 0.88161859, 0.9408093, -1.52226142, 0.9408093);
-  iir_filter_init(&notch_100hz, 1.0, -0.54871515, 0.77567951, 0.88783976, -0.54871515, 0.88783976);
-  iir_filter_init(&low_pass, 1.0, -1.64745998, 0.70089678, 0.0133592, 0.0267184, 0.0133592);
-  iir_filter_init(&high_pass, 1.0, -1.91119707, 0.91497583, 0.95654323, -1.91308645, 0.95654323);
-
-
   while (1)
   {
-      if (ads_available) {
-          ads_available = 0;
-          led_ds0_toggle();
-
-          double value = ads1292_read_channel2();
-
-          value = iir_filter_process(&notch_50hz, value);
-          value = iir_filter_process(&notch_100hz, value);
-          value = iir_filter_process(&low_pass, value);
-          value = iir_filter_process(&high_pass, value);
-
-          if (fabs(value) < 200) value *= 0.3;
-
-          char msg[64];
-          snprintf(msg, sizeof(msg), "id:%.2lf\r\n", value);
-          HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
-      }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -219,6 +186,27 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
